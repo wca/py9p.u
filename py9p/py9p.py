@@ -140,6 +140,10 @@ def otoa(p):
 
 
 def hasperm(f, uid, p):
+    '''Verify permissions for access type 'p' to file 'f'. 'p' is of the type
+    returned by otoa() above, i.e., should contain the A* flags.
+
+    f should resemble Dir, i.e., should have f.mode, f.uid, f.gid'''
     m = f.mode & 7  # other
     if (p & m) == p:
         return 1
@@ -257,7 +261,7 @@ class Dir:
     # atime         last read time 
     # mtime         last write time 
     # length        file length 
-    # name          last element of path 
+    # name          
     # uid           owner name 
     # gid           group name 
     # muid          last modifier name 
@@ -820,18 +824,18 @@ class Server(object):
 
     def tstat(self, req):
         req.fid = req.sock.getfid(req.ifcall.fid)
+        req.ofcall.stat = []
         if not req.fid:
             self.respond(req, Eunknownfid)
             return
         if hasattr(self.fs, 'stat'):
-            self.fs.stat(req)
+            self.fs.stat(self, req)
         else:
             self.respond(req, Enostat)
 
     def rstat(self, req, error):
         if error:
             return
-        # XXX
 
     def twstat(self, req):
         req.fid = req.sock.getfid(req.ifcall.fid)
@@ -841,7 +845,7 @@ class Server(object):
         if not hasattr(self.fs, 'wstat'):
             self.respond(req, Enowstat)
             return
-        # XXX
+
     def rwstat(self, req, error):
         return
 
@@ -1042,7 +1046,11 @@ class Client(object):
 
     def rm(self, pstr):
         self.open(pstr)
-        self._remove(self.F)
+        try:
+            self._remove(self.F)
+        except RpcError, e:
+            self.close()
+            raise
         self.close()
 
     def read(self, l):
