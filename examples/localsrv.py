@@ -6,6 +6,8 @@ import stat
 import os.path
 import copy
 import time
+import pwd
+import grp
 
 import py9p
 
@@ -23,9 +25,17 @@ def _nf(func, *args):
     except py9p.ServerError,e:
         return
 
-def uidname(u):            # XXX
-    return "%d" % u
-gidname = uidname            # XXX
+def uidname(u):
+    try:
+        return "%s" % pwd.getpwuid(u).pw_name
+    except KeyError,e:
+        return "%d" % u
+
+def gidname(g):
+    try:
+        return "%s" % grp.getgrgid(g).gr_name
+    except KeyError,e:
+        return "%d" % g
 
 class LocalFs(object):
     """
@@ -208,7 +218,6 @@ class LocalFs(object):
         req.ofcall.qid = d.qid
         srv.respond(req, None)
 
-        
     def clunk(self, srv, req):
         f = self.getfile(req.fid.qid.path)
         if not f:
@@ -311,13 +320,13 @@ def main():
             print >>sys.stderr, 'missing user and authsrv'
             usage(prog)
         else:
-            py9p.sk1 = __import__("py9p.sk1")
+            py9p.sk1 = __import__("py9p.sk1").sk1
             user = args[0]
             dom = args[1]
             passwd = getpass.getpass()
             key = py9p.sk1.makeKey(passwd)
     elif authmode == 'pki':
-        py9p.pki = __import__("py9p.pki")
+        py9p.pki = __import__("py9p.pki").pki
         user = 'admin'
     elif authmode != None and authmode != 'none':
         print >>sys.stderr, "unknown auth type: %s; accepted: pki, sk1, none"%authmode

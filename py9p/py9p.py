@@ -48,6 +48,7 @@ Eperm = "permission denied"
 Eunknownfid = "unknown fid"
 Ebaddir = "bad directory in wstat"
 Ewalknotdir = "walk in non-directory"
+Eopen = "fid not open"
 
 NOTAG = 0xffff
 NOFID = 0xffffffffL
@@ -104,6 +105,7 @@ auths = ['pki', 'sk1']
 
 class Error(Exception): pass
 class EofError(Error): pass
+class EdupfidError(Error): pass
 class RpcError(Error): pass
 class ServerError(Error): pass
 class ClientError(Error): pass
@@ -243,7 +245,7 @@ class Qid(object):
 class Fid(object):
     def __init__(self, pool, fid, path='', auth=0):
         if fid in pool:
-            return None
+            raise EdupfidError(Edupfid)
         self.fid = fid
         self.ref = 1
         self.omode=-1
@@ -553,8 +555,9 @@ class Server(object):
             self.respond(req, "%s: authentication not required"%(sys.argv[0]))
             return
 
-        req.afid = Fid(req.sock.fids, req.ifcall.afid, auth=1)
-        if not req.afid:
+        try:
+            req.afid = Fid(req.sock.fids, req.ifcall.afid, auth=1)
+        except EdupfidError, e:
             self.respond(req, Edupfid)
             return
         req.afid.uname = req.ifcall.uname
@@ -568,8 +571,9 @@ class Server(object):
             req.sock.delfid(req.afid.fid)
 
     def tattach(self, req):
-        req.fid = Fid(req.sock.fids, req.ifcall.fid)
-        if not req.fid:
+        try:
+            req.fid = Fid(req.sock.fids, req.ifcall.fid)
+        except EdupfidError, e:
             self.respond(req, Edupfid)
             return
 
@@ -634,8 +638,9 @@ class Server(object):
             self.respond(req, Ewalknotdir)
             return
         if req.ifcall.fid != req.ifcall.newfid:
-            req.newfid = Fid(req.sock.fids, req.ifcall.newfid)
-            if not req.newfid:
+            try:
+                req.newfid = Fid(req.sock.fids, req.ifcall.newfid)
+            except EdupfidError, e:
                 self.respond(req, Edupfid)
                 return
             req.newfid.uid = req.fid.uid
@@ -685,23 +690,11 @@ class Server(object):
 
         req.ofcall.qid = req.fid.qid
         req.ofcall.iounit = self.msize - IOHDRSZ
-        mode = req.ifcall.mode&3
-        if mode == OREAD:
-            p = AREAD
-        elif mode == OWRITE:
-            p = AWRITE
-        elif mode == ORDWR:
-            p = AREAD|AWRITE
-        elif mode == OEXEC:
-            p = AEXEC
-        else:
-            self.respond(req, "unknown open mode: %d" % mode)
-            return
-
+        req.ifcall.acc = [AREAD, AWRITE, AREAD|AWRITE, AEXEC][req.ifcall.mode & 3]
         if req.ifcall.mode & OTRUNC:
-            p = p | AWRITE
-
-        if (req.fid.qid.type & QTDIR) and (p != AREAD):
+            req.ifcall.acc |= AWRITE
+ 
+        if (req.fid.qid.type & QTDIR) and (req.ifcall.acc != AREAD):
             self.respond(req, Eperm)
         if hasattr(self.fs, 'open'):
             self.fs.open(self, req)
@@ -727,7 +720,7 @@ class Server(object):
         elif hasattr(self.fs, 'create'):
             self.fs.create(self, req)
         else:
-            respond(req, Enocreate)
+            self.respond(req, Enocreate)
 
     def rcreate(self, req, error):
         if error:
@@ -736,17 +729,20 @@ class Server(object):
         req.fid.qid = req.ofcall.qid
         req.ofcall.iounit = self.msize - IOHDRSZ
 
+    def bufread(self, req, buf) :
+        req.ofcall.data = buf[req.ifcall.offset : req.ifcall.offset + req.ifcall.count]
+        return self.respond(req, None)
+
     def tread(self, req):
         req.fid = req.sock.getfid(req.ifcall.fid)
         if not req.fid:
-            self.respond(req, Eunknownfid)
-            return
+            return self.respond(req, Eunknownfid)
+        if req.fid.omode == -1 :
+            return self.respond(req, Eopen)
         if req.ifcall.count < 0:
-            self.respond(req, Ebotch)
-            return
+            return self.respond(req, Ebotch)
         if req.ifcall.offset < 0 or ((req.fid.qid.type & QTDIR) and (req.ifcall.offset != 0) and (req.ifcall.offset != req.fid.diroffset)):
-            self.respond(req, Ebadoffset)
-            return
+            return self.respond(req, Ebadoffset)
 
         if req.fid.qid.type & QTAUTH and self.authfs:
             self.authfs.read(self, req)
@@ -756,8 +752,7 @@ class Server(object):
             req.ifcall.count = self.msize - IOHDRSZ
         o = req.fid.omode & 3
         if o != OREAD and o != ORDWR and o != OEXEC:
-            self.respond(req, Ebotch)
-            return
+            return self.respond(req, Ebotch)
         if hasattr(self.fs, 'read'):
             self.fs.read(self, req)
         else:
@@ -781,15 +776,11 @@ class Server(object):
     def twrite(self, req):
         req.fid = req.sock.getfid(req.ifcall.fid)
         if not req.fid:
-            self.respond(req, Eunknownfid)
-            return
-        if req.ifcall.count < 0:
-            self.respond(req, Ebotch)
-            return
-        if req.ifcall.offset < 0:
-            self.respond(req, Ebotch)
-            return
-
+            return self.respond(req, Eunknownfid)
+        if req.fid.omode == -1 :
+            return self.respond(req, Eopen)
+        if req.ifcall.count < 0 or req.ifcall.offset < 0:
+            return self.respond(req, Ebotch)
         if req.fid.qid.type & QTAUTH and self.authfs:
             self.authfs.write(self, req)
             return
@@ -798,8 +789,7 @@ class Server(object):
             req.ifcall.count = self.msize - IOHDRSZ
         o = req.fid.omode & 3
         if o != OWRITE and o != ORDWR:
-            self.respond(req, "write on fid with open mode 0x%ux" % req.fid.omode)
-            return
+            return self.respond(req, "write on fid with open mode 0x%ux" % req.fid.omode)
         if hasattr(self.fs, 'write'):
             self.fs.write(self, req)
         else:
@@ -811,10 +801,12 @@ class Server(object):
     def tclunk(self, req):
         req.fid = req.sock.getfid(req.ifcall.fid)
         if not req.fid:
-            self.respond(req, Eunknownfid)
+            return self.respond(req, Eunknownfid)
+        if hasattr(self.fs, 'clunk'):
+            self.fs.clunk(self, req)
         else:
-            req.sock.delfid(req.ifcall.fid)
             self.respond(req, None)
+        req.sock.delfid(req.ifcall.fid)
 
     def rclunk(self, req, error):
         return
@@ -822,8 +814,7 @@ class Server(object):
     def tremove(self, req):
         req.fid = req.sock.getfid(req.ifcall.fid)
         if not req.fid:
-            self.respond(req, Eunknownfid)
-            return
+            return self.respond(req, Eunknownfid)
         if hasattr(self.fs, 'remove'):
             self.fs.remove(self, req)
         else:
@@ -836,8 +827,7 @@ class Server(object):
         req.fid = req.sock.getfid(req.ifcall.fid)
         req.ofcall.stat = []
         if not req.fid:
-            self.respond(req, Eunknownfid)
-            return
+            return self.respond(req, Eunknownfid)
         if hasattr(self.fs, 'stat'):
             self.fs.stat(self, req)
         else:
@@ -850,11 +840,11 @@ class Server(object):
     def twstat(self, req):
         req.fid = req.sock.getfid(req.ifcall.fid)
         if not req.fid:
-            self.respond(req, Eunknownfid)
-            return
-        if not hasattr(self.fs, 'wstat'):
+            return self.respond(req, Eunknownfid)
+        if hasattr(self.fs, 'wstat'):
+            self.fs.wstat(self, req)
+        else:
             self.respond(req, Enowstat)
-            return
 
     def rwstat(self, req, error):
         return
