@@ -429,9 +429,9 @@ class Server(object):
         s.closing = True
 
         if sock in self.readpool :
-            self.readpool.delete(sock)
+            self.readpool.remove(sock)
         if sock in self.writepool :
-            self.writeopol.delete(sock)
+            self.writepool.remove(sock)
 
         # find first tag not in use
         tags = [r.ifcall.tag for r in s.reqs]
@@ -539,8 +539,9 @@ class Server(object):
                 if not errornum:
                     errornum = ERRUNDEF
                 req.ofcall.errornum = errornum
+        s = req.sock
         try:
-            self.marshal.send(req.sock, req.ofcall)
+            self.marshal.send(s, req.ofcall)
         except socket.error, e:
             if self.chatty:
                 print >>sys.stderr, "socket error: " + e.args[1]
@@ -551,7 +552,7 @@ class Server(object):
             self.shutdown(s)
         except Exception, e:
             if self.chatty:
-                print >>sys.stderr, "socket error: " + e.args[0]
+                print >>sys.stderr, "socket error: " + str(e.args)
             self.shutdown(s)
 
         # XXX: unsure whether we need proper flushing semantics from rsc's p9p
