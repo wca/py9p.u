@@ -11,6 +11,8 @@ import grp
 
 import py9p
 
+Eunknown = "unknown file"
+
 def _os(func, *args):
     try:
         return func(*args)
@@ -93,7 +95,7 @@ class LocalFs(object):
     def open(self, srv, req):
         f = self.getfile(req.fid.qid.path)
         if not f:
-            srv.respond(req, "unknown file")
+            srv.respond(req, Eunknown)
             return
         if (req.ifcall.mode & 3) == py9p.OWRITE:
             if not self.cancreate:
@@ -120,7 +122,7 @@ class LocalFs(object):
     def walk(self, srv, req):
         f = self.getfile(req.fid.qid.path)
         if not f:
-            srv.respond(req, 'unknown file')
+            srv.respond(req, Eunknown)
             return
         npath = f.localpath
         for path in req.ifcall.wname:
@@ -160,7 +162,7 @@ class LocalFs(object):
     def remove(self, srv, req):
         f = self.getfile(req.fid.qid.path)
         if not f:
-            srv.respond(req, 'unknown file')
+            srv.respond(req, Eunknown)
             return
         if not self.cancreate:
             srv.respond(req, "read-only file server")
@@ -184,7 +186,7 @@ class LocalFs(object):
 
         f = self.getfile(req.fid.qid.path)
         if not f:
-            srv.respond(req, 'unknown file')
+            srv.respond(req, Eunknown)
             return
         name = f.localpath+'/'+req.ifcall.name
         if req.ifcall.perm & py9p.DMDIR:
@@ -220,7 +222,9 @@ class LocalFs(object):
     def clunk(self, srv, req):
         f = self.getfile(req.fid.qid.path)
         if not f:
-            srv.respond(req, 'unknown file')
+            #srv.respond(req, Eunknown)
+            # allow clunk of unknown files for auth
+            srv.respond(req, None)
             return
         f = self.files[req.fid.qid.path]        
         if hasattr(f, 'fd') and f.fd is not None:
@@ -231,7 +235,7 @@ class LocalFs(object):
     def stat(self, srv, req):
         f = self.getfile(req.fid.qid.path)
         if not f:
-            srv.respond(req, "unknown file")
+            srv.respond(req, Eunknown)
             return
         req.ofcall.stat.append(self.pathtodir(f.localpath))
         srv.respond(req, None)
@@ -239,7 +243,7 @@ class LocalFs(object):
     def read(self, srv, req):
         f = self.getfile(req.fid.qid.path)
         if not f:
-            srv.respond(req, "unknown file")
+            srv.respond(req, Eunknown)
             return
 
         if f.qid.type & py9p.QTDIR:
@@ -261,7 +265,7 @@ class LocalFs(object):
 
         f = self.getfile(req.fid.qid.path)
         if not f:
-            srv.respond(req, "unknown file")
+            srv.respond(req, Eunknown)
             return
 
         f.fd.seek(req.ifcall.offset)

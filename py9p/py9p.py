@@ -836,7 +836,7 @@ class Server(object):
         req.fid = req.sock.getfid(req.ifcall.fid)
         if not req.fid:
             return self.respond(req, Eunknownfid)
-        if req.fid.omode == -1 :
+        if req.fid.omode == -1 and self.authfs is None:
             return self.respond(req, Eopen)
         if req.ifcall.count < 0:
             return self.respond(req, Ebotch)
@@ -876,7 +876,7 @@ class Server(object):
         req.fid = req.sock.getfid(req.ifcall.fid)
         if not req.fid:
             return self.respond(req, Eunknownfid)
-        if req.fid.omode == -1 :
+        if req.fid.omode == -1 and self.authfs is None:
             return self.respond(req, Eopen)
         if req.ifcall.count < 0 or req.ifcall.offset < 0:
             return self.respond(req, Ebotch)
