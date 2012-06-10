@@ -385,7 +385,7 @@ class Server(object):
     activesocks = {}
 
     def __init__(self, listen, authmode=None, fs=None, user=None, dom=None, key=None, chatty=False, dotu=False):
-        if authmode == None:
+        if authmode == None or authmode == 'none':
             self.authfs = None
         elif authmode == 'pki':
             import pki
