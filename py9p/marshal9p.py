@@ -97,7 +97,10 @@ class Marshal(object):
         self.enc2(len(x))
         self.encX(x)
     def decS(self):
-        return self.decX(self.dec2())
+        str_len = self.dec2()
+        if self.chatty:
+            print "-decS-> string len=%d" % str_len
+        return self.decX(str_len)
 
     def encD(self, d):
         "Encode length/data arrays with 4-byte length"
@@ -291,6 +294,8 @@ class Marshal9P(Marshal):
     def dec(self, fcall):
         if fcall.type in (py9p.Tversion, py9p.Rversion):
             fcall.msize = self.dec4()
+            if self.chatty:
+                print "-version-> msize=%d" % fcall.msize
             fcall.version = self.decS()
         elif fcall.type == py9p.Tauth:
             fcall.afid = self.dec4()

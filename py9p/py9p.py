@@ -34,8 +34,8 @@ _enumCmd("version", "auth", "attach", "error", "flush", "walk", "open",
 version = '9P2000'
 versionu = '9P2000.u'
 
-Ebadoffset = "bad offset"
-Ebotch = "9P protocol botch"
+Ebadoffset = "bad offset (got %d expected 0 or %d)"
+Ebotch = "9P protocol botch: %s"
 Ecreatenondir = "create in non-directory"
 Edupfid = "duplicate fid"
 Eduptag = "duplicate tag"
@@ -327,21 +327,33 @@ class Dir(object):
     def tolstr(self, dirname=''):
         if dirname != '':
             dirname = dirname+'/'
+
+        fmt = "%s %d %d %-8d\t\t%s" if self.dotu else "%s %s %s %-8d\t\t%s"
+        vals = (modetostr(self.mode))
         if self.dotu:
-            return "%s %d %d %-8d\t\t%s" % (modetostr(self.mode), self.uidnum, self.gidnum, self.length, dirname+self.name)
+            vals += (self.uidnum, self.gidnum)
         else:
-            return "%s %s %s %-8d\t\t%s" % (modetostr(self.mode), self.uid, self.gid, self.length, dirname+self.name)
+            vals += (self.uid, self.gid)
+        vals += (self.length, dirname + self.name)
+
+        return fmt % vals
+
+    def size(self):
+        ret = 2 + 4 + 13 + 4 + 4 + 4 + 8 + len(self.name) + len(self.uid)
+        ret += len(self.gid) + len(self.muid) + 2 + 2 + 2
+
+        if self.dotu:
+            ret += len(self.extension) + 2 + 4 + 4 + 4
+
+        # Add the size of the stat size here.
+        return ret + 2
 
     def todata(self, marsh):
         '''This circumvents a leftower from the original 9P python implementation.
         Why do enc functions have to hide data in "bytes"? I don't know'''
 
         marsh.setBuf()
-        if marsh.dotu:
-            size = 2+4+13+4+4+4+8+len(self.name)+len(self.uid)+len(self.gid)+len(self.muid)+2+2+2+2+len(self.extension)+2+4+4+4
-        else:
-            size = 2+4+13+4+4+4+8+len(self.name)+len(self.uid)+len(self.gid)+len(self.muid)+2+2+2+2
-        marsh.enc2(size)
+        marsh.enc2(self.size())
         marsh.enc2(self.type)
         marsh.enc4(self.dev)
         marsh.encQ(self.qid)
@@ -359,6 +371,25 @@ class Dir(object):
             marsh.enc4(self.gidnum)
             marsh.enc4(self.muidnum)
         return marsh.bytes
+
+    def __str__(self):
+        vals = ()
+        retstr = "{"
+        # 9P2000 attributes
+        retstr += "size=%d,type=%d,dev=%d,qid=%s"
+        vals += (self.size(), self.type, self.dev, self.qid)
+        retstr += ",mode=%d,atime=%d,mtime=%d,length=%d"
+        vals += (self.mode, self.atime, self.mtime, self.length)
+        retstr += ",name=%s,uid=%s,gid=%s,muid=%s"
+        vals += (self.name, self.uid, self.gid, self.muid)
+        # 9P2000.u attributes
+        if self.dotu:
+            retstr += ",extension=%s,uidnum=%d,gidnum=%d,muidnum=%d"
+            vals += (self.extension, self.uidnum, self.gidnum, self.muidnum)
+        retstr += "}"
+
+        return retstr % vals
+    __repr__ = __str__
 
 class Req(object):
     def __init__(self, tag, fd = None, ifcall=None, ofcall=None, dir=None, oldreq=None,
@@ -776,7 +807,7 @@ class Server(object):
             self.respond(req, Eunknownfid)
             return
         if req.fid.omode != -1:
-            self.respond(req, Ebotch)
+            self.respond(req, Ebotch % "fid already open")
             return
         if req.fid.qid.type & QTDIR:
             if (req.ifcall.mode & (~ORCLOSE)) != OREAD:
@@ -813,7 +844,7 @@ class Server(object):
         if not req.fid:
             self.respond(req, Eunknownfid)
         elif req.fid.omode != -1:
-            self.respond(req, Ebotch)
+            self.respond(req, Ebotch % "fid already open")
         elif not (req.fid.qid.type & QTDIR):
             self.respond(req, Ecreatenondir)
         elif hasattr(self.fs, 'create'):
@@ -839,9 +870,9 @@ class Server(object):
         if req.fid.omode == -1 and self.authfs is None:
             return self.respond(req, Eopen)
         if req.ifcall.count < 0:
-            return self.respond(req, Ebotch)
+            return self.respond(req, Ebotch % "read count less than zero")
         if req.ifcall.offset < 0 or ((req.fid.qid.type & QTDIR) and (req.ifcall.offset != 0) and (req.ifcall.offset != req.fid.diroffset)):
-            return self.respond(req, Ebadoffset)
+            return self.respond(req, Ebadoffset % (req.ifcall.offset, req.fid.diroffset))
 
         if req.fid.qid.type & QTAUTH and self.authfs:
             self.authfs.read(self, req)
@@ -851,7 +882,7 @@ class Server(object):
             req.ifcall.count = self.msize - IOHDRSZ
         o = req.fid.omode & 3
         if o != OREAD and o != ORDWR and o != OEXEC:
-            return self.respond(req, Ebotch)
+            return self.respond(req, Ebotch % "not open for read")
         if hasattr(self.fs, 'read'):
             self.fs.read(self, req)
         else:
@@ -879,7 +910,7 @@ class Server(object):
         if req.fid.omode == -1 and self.authfs is None:
             return self.respond(req, Eopen)
         if req.ifcall.count < 0 or req.ifcall.offset < 0:
-            return self.respond(req, Ebotch)
+            return self.respond(req, Ebotch % "write count/offset < 0")
         if req.fid.qid.type & QTAUTH and self.authfs:
             self.authfs.write(self, req)
             return
